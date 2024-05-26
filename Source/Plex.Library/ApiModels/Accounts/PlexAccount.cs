@@ -164,20 +164,50 @@ namespace Plex.Library.ApiModels.Accounts
         {
             var servers = new List<Server>();
             var accountServerContainer = await this.plexAccountClient.GetAccountServersAsync(this.AuthToken);
+
             foreach (var server in accountServerContainer.Servers)
             {
+                bool isConnected = false;
+                string baseUri = server.Uri.ToString();
+                List<string> localAddresses = server.LocalAddresses.Split(',').ToList();
+
+                // Try primary URI first
                 try
                 {
-                    var activeServer =
-                        await this.plexServerClient.GetPlexServerInfo(server.AccessToken, server.Uri.ToString());
+                    var activeServer = await this.plexServerClient.GetPlexServerInfo(server.AccessToken, baseUri);
                     if (!string.IsNullOrEmpty(activeServer.MachineIdentifier))
                     {
                         servers.Add(new Server(this.plexServerClient, this.plexLibraryClient, server));
+                        isConnected = true;
                     }
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine("Cannot access server: " + server.Host);
+                    Console.WriteLine("Cannot access server using primary URI: " + baseUri);
+                }
+
+                // If primary URI fails, try alternate IPs
+                if (!isConnected)
+                {
+                    foreach (var address in localAddresses)
+                    {
+                        string newUri = baseUri.Replace(server.Host, address);
+                        try
+                        {
+                            var activeServer = await this.plexServerClient.GetPlexServerInfo(server.AccessToken, newUri);
+                            if (!string.IsNullOrEmpty(activeServer.MachineIdentifier))
+                            {
+                                server.Host = address;
+                                servers.Add(new Server(this.plexServerClient, this.plexLibraryClient, server));
+                                isConnected = true;
+                                break; // Stop trying other IPs if connected
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Console.WriteLine("Cannot access server using alternate IP: " + address);
+                        }
+                    }
                 }
             }
 
